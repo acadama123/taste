@@ -1,37 +1,30 @@
-require(data.table)
+library(data.table)
 
-# specialArgs contains k (i.e. number of nearest neighbours)
-KNN_setup <- function(dataIn, maxRating, specialArgs)
-{
-        trainData <- dataIn
-        if ((.Machine$integer.max / length(unique(dataIn[,1]))) > length(unique(dataIn[,2]))) {
-                dataSetSize <- "small"
-        } else {
-                dataSetSize <- "big"
-        }
-        maxRating <- maxRating
-        KNNData <- list(trainData = dataIn, mode = dataSetSize,
-                        k = specialArgs, maxRating = maxRating)
-        class(KNNData) <- "recProbs"
-        return(KNNData)
+#-------------------------------kNN utility funcs-------------------------------
+# Converts dataIn from a data.frame object to a matrix.
+# Rows represent users; columns represent items; entries represent ratings.
+# Items that a user hasn't rated will have the value NA.
+data_to_matrix <- function(dataIn) {
+        dt <- as.data.table(dataIn)
+
+        userID <- names(dataIn)[1]
+        itemID <- names(dataIn)[2]
+        valueName <- names(dataIn)[3]
+        formula <- paste(c(userID, itemID), collapse = '~')
+        table <- dcast(dt, formula, fill = NA, value.var=valueName)
+
+        # The first column of table will be the user IDs, which we don't need in our matrix
+        mat <- as.matrix(table[,-1])
+
+        # Assign the row names of the new matrix with our user IDs
+        rNames <- as.list(table[,1])
+        rNames <- rNames[[names(rNames)]]
+        row.names(mat) <- rNames
+        return(mat)
 }
 
-KNN_predict <- function(probsFitOut, newXs)
-{
-        if (probsFitOut$mode == "small")
-                find_kNN_small(probsFitOut$trainData,
-                               probsFitOut$k,
-                               probsFitOut$maxRating,
-                               newXs)
-        else
-                find_kNN_big(probsFitOut$trainData,
-                             probsFitOut$k,
-                             probsFitOut$maxRating,
-                             newXs)
-}
-
-#-----------------------------kNN parameters checking-----------------------------
-
+# TODO: Decide whether to remove this func, as general use should allow
+# negative ratings, meaning this func will become a single if statement.
 is_valid_values <- function(k, maxRating)
 {
         valid <- TRUE
@@ -48,32 +41,13 @@ is_valid_values <- function(k, maxRating)
 
 #-----------------------------kNN similarity funcs-----------------------------
 
-# Similarity value: the bigger == the more similar
+# Similarity evaluation rule: bigger value == more similar
 
 get_vlen <- function(v) sqrt(v %*% v)
 
-#----------In-house similarity----------
-
-inhouseSim <- function(potentialUser, targetUser)
-{
-        commItemsIdx <- !is.na(potentialUser) & !is.na(targetUser)
-        if (sum(commItemsIdx) == 0) return(NaN)
-
-        xvec <- potentialUser[commItemsIdx]
-        yvec <- targetUser[commItemsIdx]
-        yLen <- get_vlen(yvec)
-        dotProd <- (xvec %*% yvec)
-        pCos <- dotProd / yLen
-        p_tCos <- ((xvec - yvec) %*% yvec) / yLen
-        cosine <- dotProd / (get_vlen(xvec) * yLen)
-        (pCos - p_tCos) * cosine
-}
-
-# Since rbfk similarity assigns higher values for more similar pair of vector
-# (value range: [0,1]), to match with our similarity criteria, we subtract said value
-# from 1.
 #----------Radial Basis Function Kernel similarity----------
-
+# https://en.wikipedia.org/wiki/Radial_basis_function_kernel
+# TODO: Add sigma as a parameter. Consider how this would affect sim func. choosing as well.
 rbfkSim <- function(potentialUser, targetUser)
 {
         commItemsIdx <- !is.na(potentialUser) & !is.na(targetUser)
@@ -86,7 +60,6 @@ rbfkSim <- function(potentialUser, targetUser)
 }
 
 #----------Correlation similarity----------
-
 correlSim <- function(potentialUser, targetUser)
 {
         commItemsIdx <- !is.na(potentialUser) & !is.na(targetUser)
@@ -102,7 +75,6 @@ correlSim <- function(potentialUser, targetUser)
 }
 
 #----------Chebychev similarity----------
-
 chebychevSim <- function(potentialUser, targetUser)
 {
         commItemsIdx <- !is.na(potentialUser) & !is.na(targetUser)
@@ -115,7 +87,6 @@ chebychevSim <- function(potentialUser, targetUser)
 }
 
 #----------Euclidean similarity----------
-
 euclideanSim <- function(potentialUser, targetUser)
 {
         commItemsIdx <- !is.na(potentialUser) & !is.na(targetUser)
@@ -127,7 +98,6 @@ euclideanSim <- function(potentialUser, targetUser)
 }
 
 #----------Manhattan similarity----------
-
 manhattanSim <- function(potentialUser, targetUser)
 {
         commItemsIdx <- !is.na(potentialUser) & !is.na(targetUser)
@@ -139,20 +109,14 @@ manhattanSim <- function(potentialUser, targetUser)
 }
 
 #----------Cosine similarity----------
-
-# Since more similar pair of vectors have higher cosine values (max = 1), to
-# match our similarity criteria, we actually calculate the angle between
-# the vectors, which explains the acos().
-# Problem: c(1) & c(5) has a cosine val of 0 even though they are very different
 cosineSim <- function(potentialUser, targetUser)
 {
-        # 1 & to compare each element of both vectors
         commItemsIdx <- !is.na(potentialUser) & !is.na(targetUser)
         if (sum(commItemsIdx) == 0) return(NaN)
 
         xvec <- potentialUser[commItemsIdx]
         yvec <- targetUser[commItemsIdx]
-        ((xvec %*% yvec) / (get_vlen(xvec) * get_vlen(yvec)))
+        (xvec %*% yvec) / (get_vlen(xvec) * get_vlen(yvec))
 }
 
 #-------------------------------kNN calculations-------------------------------
@@ -165,20 +129,23 @@ find_rated_users <- function(dataIn, targetItemIdx)
 
 # Calculate each rated user's similarity to the target user.
 # Here is where to choose which similarity function to use.
-# NOTE: Make sure to change the similarity function used in both the if and the else
-#       statements if you're planning of using only one similarity function
+# NOTE: Make sure to change the similarity function used in both the if and the
+#       else statements if you're planning of using only one similarity function.
+# TODO: Add option for user to choose which sim func to use.
 calc_sims <- function(ratedUsers, targetUser, numRatedUsers)
 {
         if (numRatedUsers == 1) {
-                simVec <- inhouseSim(ratedUsers, targetUser)
+                simVec <- cosineSim(ratedUsers, targetUser)
         } else {
                 simVec <- vector(mode = "numeric", length = nrow(ratedUsers))
                 for (i in 1:numRatedUsers)
-                        simVec[i] <- inhouseSim(ratedUsers[i,], targetUser)
+                        simVec[i] <- cosineSim(ratedUsers[i,], targetUser)
         }
         return(simVec)
 }
 
+# Calculates, for each possible rating, the probability that targetUser will give
+# said rating for targetItem.
 calc_rating_probs <- function(targetUser, targetItemIdx, ratedUsers,
                               simVec, k, maxRating)
 {
@@ -195,8 +162,7 @@ calc_rating_probs <- function(targetUser, targetItemIdx, ratedUsers,
                         numNN <- 1
                         kNN <- nearestNeighbours[targetItemIdx]
                 } else {
-                        # If don't have k nearest neighbours,
-                        #       use as many as there are
+                        # If don't have k nearest neighbours, use as many as there are
                         nearestNeighbours <- ratedUsers[sortOrder$ix,]
                         numNN <- min(k, nrow(nearestNeighbours))
                         kNN <- nearestNeighbours[1:numNN,targetItemIdx]
@@ -209,10 +175,12 @@ calc_rating_probs <- function(targetUser, targetItemIdx, ratedUsers,
         }
 }
 
+# Saves the current rating prediction matrix.
+# TODO: Add option for choosing saving iteration and number of save files to keep
 save_mat <- function(ratingPredMat, i, fileName)
 {
         print("Saving matrix")
-        name <- paste(fileName,".mat", i, sep="")
+        name <- paste(fileName, "_", i, ".mat", sep="")
         write.csv(ratingPredMat, name, row.names = FALSE)
         # Only keep latest 5 iterations
         oldFileName <- paste(fileName,".mat", i - 5*10000, sep="")
@@ -223,16 +191,15 @@ save_mat <- function(ratingPredMat, i, fileName)
 # find_kNN's assumptions:
 #       1. newXs doesn't contain any new users or items
 #       2. ratings have consecutive integer values, ranging from 1 to maxRating.
-
 # This version of kNN is for cases where dataIn can be entirely converted into a matrix.
-#       i.e. (# unique users * # unique items) < .Machine$integer.max
-find_kNN_small <- function(dataIn, k, maxRating, newXs,
-                           fileName = NULL, verbose = FALSE, progressSaving = FALSE)
+#       i.e. (# unique users * # unique items) <= .Machine$integer.max
+find_kNN_small <- function(dataIn, k, maxRating, newXs, fileName = NULL,
+                           verbose = FALSE, progressSaving = FALSE)
 {
         if(is_valid_values(k, maxRating) == FALSE)
                 return(-1)
 
-        dataMat <- dataToMatrix(dataIn)
+        dataMat <- data_to_matrix(dataIn)
         ratingPredMat <- matrix(nrow = nrow(newXs), ncol = maxRating)
         for (i in 1:nrow(newXs)) {
                 if (verbose)
@@ -263,13 +230,15 @@ find_kNN_small <- function(dataIn, k, maxRating, newXs,
         return(ratingPredMat)
 }
 
+# This version of kNN is for cases where dataIn can NOT be entirely converted into a matrix.
+#       i.e. (# unique users * # unique items) > .Machine$integer.max
 find_kNN_big <- function(dataIn, k, maxRating, newXs,
                          fileName = NULL, verbose = FALSE, progressSaving = FALSE)
 {
         if(is_valid_values(k, maxRating) == FALSE)
                 return(-1)
-        # byrow = TRUE allows us to replace a matrix's row with a vector
-        ratingPredMat <- matrix(nrow = nrow(newXs), ncol = maxRating, byrow = TRUE)
+
+        ratingPredMat <- matrix(nrow = nrow(newXs), ncol = maxRating)
         for (i in 1:nrow(newXs)) {
                 if (verbose)
                         print(i)
@@ -289,7 +258,7 @@ find_kNN_big <- function(dataIn, k, maxRating, newXs,
                         ratedUsersIdx <- which(dataIn[,1] %in% ratedUsersIDs)
                         targetUserIdx <- which(dataIn[,1] %in% targetUserID)
 
-                        dataExtract <- dataToMatrix(dataIn[c(ratedUsersIdx,targetUserIdx),])
+                        dataExtract <- data_to_matrix(dataIn[c(ratedUsersIdx,targetUserIdx),])
 
                         targetUserIdx <- which(rownames(dataExtract) == newXs[i,1])
                         targetItemIdx <- which(colnames(dataExtract) == newXs[i,2])
@@ -311,8 +280,15 @@ find_kNN_big <- function(dataIn, k, maxRating, newXs,
         return(ratingPredMat)
 }
 
-#-----------------------------kNN test-----------------------------
+#-----------------------------kNN testing-----------------------------
 
+# Calculates the percentage of accurate predictions.
+# We consider a prediction as the rating (or ratings) with the highest probability
+# in the rating distribution.
+# Ex:
+# ratingPredMat[i,] =           [1] [2] [3] [4] [5]
+#                       [i]     0.0 0.2 0.3 0.4 0.1
+# => For newXs[i,], kNN predicts the rating to be 4.
 get_accuracy <- function(ratingPredMat, maxRating, newXs, correctRatings)
 {
         numCorrect <- 0
@@ -324,10 +300,12 @@ get_accuracy <- function(ratingPredMat, maxRating, newXs, correctRatings)
         return(numCorrect / nrow(newXs))
 }
 
+# Runs find_kNN (small or big) and tests the predictions with know ratings.
+# TODO: Add option to save results or not.
 test_kNN <- function(dataIn, k, maxRating, newXs, correctRatings, fileName)
 {
         if (nrow(newXs) != length(correctRatings)) {
-                print("Different lengths of prediction entries and target ratings")
+                print("Error: Number of prediction entries doesn't match number of correct ratings.")
                 return(-1)
         } else {
                 if ((.Machine$integer.max / length(unique(dataIn[,1]))) > length(unique(dataIn[,2]))) {
@@ -340,13 +318,13 @@ test_kNN <- function(dataIn, k, maxRating, newXs, correctRatings, fileName)
                 for (rating in 1:maxRating)
                         actualMeans[rating] <- length(correctRatings[correctRatings == rating]) / length(correctRatings)
 
-                # Print average proportion of each rating in both the
-                # predicted ratings and the actual ratings, as well as the
-                # mean absolute prediction error between them.
-                print("Average proportion of ratings:")
-                print("     For predicted ratings:")
+                # Print the rating distribution for both the predicted ratings
+                # and the actual ratings, as well as the mean absolute
+                # prediction error between them.
+                print("Rating distributions:")
+                print("For predicted ratings:")
                 print(ratingPredMeans)
-                print("     For actual ratings:")
+                print("For actual ratings:")
                 print(actualMeans)
                 print("MAPE value between the above 2 proportions:")
                 print(mean(abs(ratingPredMeans - actualMeans)))
@@ -361,25 +339,4 @@ test_kNN <- function(dataIn, k, maxRating, newXs, correctRatings, fileName)
                 write.csv(probResults, probName, row.names = FALSE)
                 write.csv(ratingPredMat, matName, row.names = FALSE)
         }
-}
-
-dataToMatrix <- function(dataIn) {
-  # turns data frame into data.table which is more enhanced than data.frame
-  dt <- as.data.table(dataIn)
-
-  # creates the table entries, and fill empty ones with NAs
-  userID <- names(dataIn)[1]
-  itemID <- names(dataIn)[2]
-  valueName <- names(dataIn)[3]
-  formula <- paste(c(userID, itemID), collapse = '~')
-  table <- dcast(dt, formula, fill = NA, value.var=valueName)
-
-  # The first column of table will be the userID, which we don't need in our matrix
-  mat <- as.matrix(table[,-1])
-
-  # Assign the row names of the new matrix with our userIDs
-  rNames <- as.list(table[,1])
-  rNames <- rNames[[names(rNames)]]
-  row.names(mat) <- rNames
-  return(mat)
 }

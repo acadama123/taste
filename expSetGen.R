@@ -8,11 +8,12 @@ does_contain_all <- function(targetList, checkList)
         return(numElementsLacked == 0)
 }
 
-# Set verbose to TRUE if want to see how many resampling trials the function needed
-sampling_data <- function(dataIn, sampleSize, verbose = FALSE)
+# Set verbose to TRUE if want to see how many resampling trials the function needed.
+# TODO: Check if resulting train set is larger than sampleSize
+sampling_data_small <- function(dataIn, sampleSize, verbose = FALSE)
 {
         if (sampleSize > nrow(dataIn)) {
-                print("Error: Sample size greater than data size")
+                print("Error: Sample size greater than data size.")
                 return(-1)
         }
         uniqueUsersTotal <- unique(dataIn[,1])
@@ -20,19 +21,23 @@ sampling_data <- function(dataIn, sampleSize, verbose = FALSE)
         samplingIdx <- sample(1:nrow(dataIn), sampleSize)
         sampleData <- dataIn[samplingIdx,]
         i <- 1
-        while (!does_contain_all(sampleData[,1], uniqueUsersTotal)
-            || !does_contain_all(sampleData[,2], uniqueItemsTotal)) {
+        while (!does_contain_all(sampleData[,1], uniqueUsersTotal) ||
+               !does_contain_all(sampleData[,2], uniqueItemsTotal)) {
                 samplingIdx <- sample(1:nrow(dataIn), sampleSize)
                 sampleData <- dataIn[samplingIdx,]
                 i <- i + 1
-                if (i %% 1000 == 0)
-                        print("10k")
         }
         if (verbose) {
                 print("Trials needed: ")
                 print(i)
         }
         return(sampleData)
+}
+
+# TODO: Rewrite the sample function for big data
+sampling_data_big <- function(dataIn, sampleSize, verbose = FALSE)
+{
+
 }
 
 # This function is used to sample SongList's training set
@@ -71,10 +76,11 @@ sampling_data3 <- function(dataIn, sampleSize, verbose = FALSE)
 #       Validation set and test set don't have the same restriction
 # ratio is a list of 3 percentages, indicating how to divide dataIn into the 3 sets
 #       ratio = [trainSetPercentage, validationSetPercentage, testSetPercentage]
+# TODO: Check if actual size of train set is larger than trainSetSize 
 create_experiment_sets <- function(dataIn, ratio)
 {
         if (sum(ratio) != 1) {
-                print("Invalid ratios")
+                print("Error: Ratios don't sum up to 1.")
                 return(-1)
         }
 
@@ -104,6 +110,7 @@ create_experiment_sets <- function(dataIn, ratio)
         return(experiment_sets)
 }
 
+# Saves the experiment sets.
 save_experiment_sets <- function(expSets, setNames)
 {
         trainSet <- expSets$trainSet
