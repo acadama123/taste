@@ -9,13 +9,14 @@ does_contain_all <- function(targetList, checkList)
 }
 
 # Set verbose to TRUE if want to see how many resampling trials the function needed.
-# TODO: Check if resulting train set is larger than sampleSize
+# TODO: Need train set size checking to make sure it's possible to get all users and items
 sampling_data_small <- function(dataIn, sampleSize, verbose = FALSE)
 {
         if (sampleSize > nrow(dataIn)) {
                 print("Error: Sample size greater than data size.")
                 return(-1)
         }
+
         uniqueUsersTotal <- unique(dataIn[,1])
         uniqueItemsTotal <- unique(dataIn[,2])
         samplingIdx <- sample(1:nrow(dataIn), sampleSize)
@@ -34,40 +35,43 @@ sampling_data_small <- function(dataIn, sampleSize, verbose = FALSE)
         return(sampleData)
 }
 
-# TODO: Rewrite the sample function for big data
+# TODO: Find a more efficient way to sample; Main bottle neck seems to be in user sampling
 sampling_data_big <- function(dataIn, sampleSize, verbose = FALSE)
 {
+        if (sampleSize > nrow(dataIn)) {
+                print("Error: Sample size greater than data size.")
+                return(-1)
+        }
 
-}
+        uniqueUsers <- unique(dataIn[,1])
+        sampleUserIdxs <- vector(mode = "integer", length = length(uniqueUsers))
+        for (i in 1:length(uniqueUsers)) {
+                userIdxs <- which(dataIn[,1] == uniqueUsers[i])
+                sampleUserIdxs[i] <- userIdxs[sample(1:length(userIdxs),1)]
+        }
+        sampleData <- dataIn[sampleUserIdxs,]
+        if (verbose)
+                print("Train set: User sample done")
 
-# This function is used to sample SongList's training set
-sampling_data3 <- function(dataIn, sampleSize, verbose = FALSE)
-{
-        # Utilize the fact that Song List has 10 samples per user,
-        # and the data set is ordered by user ids.
-        localIdx <- sample(1:10, 200000, replace = TRUE)
-        increment <- c(0:199999) * 10
-        samplingIdx <- increment + localIdx
-        sampleData <- dataIn[samplingIdx,]
-        print("User sample done")
-
-        dataIn2 <- dataIn[-samplingIdx,]
+        dataIn2 <- dataIn[-sampleUserIdxs,]
         uniqueItemsTotal <- unique(dataIn[,2])
         uniqueItemsRemaining <- uniqueItemsTotal[!(uniqueItemsTotal %in% sampleData[,2])]
-        sampleItemsIdx <- vector(mode = "integer", length = length(uniqueItemsRemaining))
+        sampleItemIdxs <- vector(mode = "integer", length = length(uniqueItemsRemaining))
         for (j in 1:length(uniqueItemsRemaining)) {
-                if (j %% 1000 == 0)
-                        print("Item i")
-                itemiIdxs <- which(dataIn2[,2] == uniqueItemsRemaining[j])
-                sampleItemsIdx[j] <- itemiIdxs[sample(1:length(itemiIdxs),1)]
+                itemIdxs <- which(dataIn2[,2] == uniqueItemsRemaining[j])
+                sampleItemIdxs[j] <- itemIdxs[sample(1:length(itemIdxs),1)]
         }
-        sampleData <- rbind(sampleData, dataIn2[sampleItemsIdx,])
-        print("Item sample done")
+        sampleData <- rbind(sampleData, dataIn2[sampleItemIdxs,])
+        if (verbose)
+                print("Train set: Item sample done")
 
-        dataIn3 <- dataIn2[-sampleItemsIdx,]
+        if (nrow(sampleData) > sampleSize)
+                return(sampleData)
+
+        dataIn3 <- dataIn2[-sampleItemIdxs,]
         remSampleSize <- sampleSize - nrow(sampleData)
-        samplingIdx <- sample(1:nrow(dataIn3), remSampleSize)
-        sampleData <- rbind(sampleData, dataIn3[samplingIdx,])
+        samplingIdxs <- sample(1:nrow(dataIn3), remSampleSize)
+        sampleData <- rbind(sampleData, dataIn3[samplingIdxs,])
         return(sampleData)
 }
 
@@ -76,8 +80,8 @@ sampling_data3 <- function(dataIn, sampleSize, verbose = FALSE)
 #       Validation set and test set don't have the same restriction
 # ratio is a list of 3 percentages, indicating how to divide dataIn into the 3 sets
 #       ratio = [trainSetPercentage, validationSetPercentage, testSetPercentage]
-# TODO: Check if actual size of train set is larger than trainSetSize 
-create_experiment_sets <- function(dataIn, ratio)
+# TODO: Check if actual size of train set is larger than trainSetSize
+create_experiment_sets <- function(dataIn, ratio, verbose = FALSE)
 {
         if (sum(ratio) != 1) {
                 print("Error: Ratios don't sum up to 1.")
@@ -88,8 +92,36 @@ create_experiment_sets <- function(dataIn, ratio)
         validationSetSize <- floor(nrow(dataIn) * ratio[2])
         testSetSize <- nrow(dataIn) - trainSetSize - validationSetSize
 
-        trainSet <- sampling_data(dataIn, trainSetSize)
-        print("Train set sampling done")
+        if (trainSetSize < 100000)
+                trainSet <- sampling_data_small(dataIn, trainSetSize, verbose)
+        else
+                trainSet <- sampling_data_big(dataIn, trainSetSize, verbose)
+        if (verbose)
+                print("Train set sampling done")
+
+        if (nrow(trainSet) > trainSetSize) {
+                print("Warning: Train set ratio modified to fit all users and items.")
+                print("Expected ratio:")
+                print(ratio[1])
+                print("Actual ratio:")
+                newTrainRatio <- nrow(trainSet) / nrow(dataIn)
+                print(newTrainRatio)
+
+                print("Adjusting ratios of validation set and of test set.")
+                validationPortion <- ratio[2] / (ratio[2] + ratio[3])
+                testPortion <- 1 - validationPortion
+                newSumRatio <- 1 - newTrainRatio
+                newValidationRatio <- newSumRatio * validationPortion
+                newTestRatio <- newSumRatio * testPortion
+                trainSetSize <- nrow(trainSet)
+                validationSetSize <- floor(nrow(dataIn) * newValidationRatio)
+                testSetSize <- nrow(dataIn) - trainSetSize - validationSetSize
+
+                print("New validation set ratio:")
+                print(newValidationRatio)
+                print("New test set ratio:")
+                print(newTestRatio)
+        }
 
         sampledRows <- as.numeric(rownames(trainSet))
         # We can do this since row index == row name for all rows
@@ -99,11 +131,13 @@ create_experiment_sets <- function(dataIn, ratio)
 
         samplingIdx <- sample(1:nrow(leftovers), validationSetSize)
         validationSet <- leftovers[samplingIdx,]
-        print("Validation set sampling done")
+        if (verbose)
+                print("Validation set sampling done")
 
         sampledRows <- as.numeric(rownames(validationSet))
         testSet <- leftovers[-sampledRows,]
-        print("Test set sampling done")
+        if (verbose)
+                print("Test set sampling done")
 
         experiment_sets <- list(trainSet = trainSet, validationSet = validationSet, testSet = testSet)
         class(experiment_sets) <- "expSets"
