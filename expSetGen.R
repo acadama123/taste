@@ -1,5 +1,5 @@
-# Assume data has 3 columns: userID, itemID, rating
-# Ensure that sample contains all userIDs and itemIDs
+# For dataIn, assume column 1 contains user IDs, column 2 contains item IDs.
+# Ensure that train set contains all userIDs and itemIDs
 
 # If the targetList contains all items in the checkList, returns True
 does_contain_all <- function(targetList, checkList)
@@ -158,7 +158,6 @@ save_experiment_sets <- function(expSets, setNames)
 #-----------------------How to create the experiment sets-----------------------
 #library(lme4)
 #ie <- InstEval
-#ie <- ie[,c(1,2,7)] # Only care about columns depicting userID, itemID, and rating
 #ratio <- c(0.7,0.2,0.1)
 #e <- create_experiment_sets(ie, ratio)
 #save_experiment_sets(e)
