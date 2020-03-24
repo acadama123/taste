@@ -25,7 +25,7 @@ data_to_matrix <- function(dataIn) {
 
 # TODO: Decide whether to remove this func, as general use should allow
 # negative ratings, meaning this func will become a single if statement.
-is_valid_values <- function(k, maxRating)
+is_valid_values <- function(k, maxRating, simFunc, simMode)
 {
         valid <- TRUE
         if (k <= 0) {
@@ -35,6 +35,13 @@ is_valid_values <- function(k, maxRating)
         if (maxRating < 1) {
                 print("Error: maxRating can't be less than 1.")
                 valid <- FALSE
+        }
+        if (is.null(simFunc)) {
+                possibleVals <- c("rbfk", "correlation", "chebychev", "euclidean", "manhattan", "cosine")
+                if (!(simMode %in% possibleVals)) {
+                        print("Error: invalid similarity mode.")
+                        valid <- FALSE
+                }
         }
         return(valid)
 }
@@ -48,7 +55,7 @@ get_vlen <- function(v) sqrt(v %*% v)
 #----------Radial Basis Function Kernel similarity----------
 # https://en.wikipedia.org/wiki/Radial_basis_function_kernel
 # TODO: Add sigma as a parameter. Consider how this would affect sim func. choosing as well.
-rbfkSim <- function(potentialUser, targetUser)
+rbfkSim <- function(potentialUser, targetUser, extraArgs = NULL)
 {
         commItemsIdx <- !is.na(potentialUser) & !is.na(targetUser)
         if (sum(commItemsIdx) == 0) return(NaN)
@@ -60,7 +67,7 @@ rbfkSim <- function(potentialUser, targetUser)
 }
 
 #----------Correlation similarity----------
-correlSim <- function(potentialUser, targetUser)
+correlSim <- function(potentialUser, targetUser, extraArgs = NULL)
 {
         commItemsIdx <- !is.na(potentialUser) & !is.na(targetUser)
         if (sum(commItemsIdx) == 0) return(NaN)
@@ -75,7 +82,7 @@ correlSim <- function(potentialUser, targetUser)
 }
 
 #----------Chebychev similarity----------
-chebychevSim <- function(potentialUser, targetUser)
+chebychevSim <- function(potentialUser, targetUser, extraArgs = NULL)
 {
         commItemsIdx <- !is.na(potentialUser) & !is.na(targetUser)
         if (sum(commItemsIdx) == 0) return(NaN)
@@ -87,7 +94,7 @@ chebychevSim <- function(potentialUser, targetUser)
 }
 
 #----------Euclidean similarity----------
-euclideanSim <- function(potentialUser, targetUser)
+euclideanSim <- function(potentialUser, targetUser, extraArgs = NULL)
 {
         commItemsIdx <- !is.na(potentialUser) & !is.na(targetUser)
         if (sum(commItemsIdx) == 0) return(NaN)
@@ -98,7 +105,7 @@ euclideanSim <- function(potentialUser, targetUser)
 }
 
 #----------Manhattan similarity----------
-manhattanSim <- function(potentialUser, targetUser)
+manhattanSim <- function(potentialUser, targetUser, extraArgs = NULL)
 {
         commItemsIdx <- !is.na(potentialUser) & !is.na(targetUser)
         if (sum(commItemsIdx) == 0) return(NaN)
@@ -109,7 +116,7 @@ manhattanSim <- function(potentialUser, targetUser)
 }
 
 #----------Cosine similarity----------
-cosineSim <- function(potentialUser, targetUser)
+cosineSim <- function(potentialUser, targetUser, extraArgs = NULL)
 {
         commItemsIdx <- !is.na(potentialUser) & !is.na(targetUser)
         if (sum(commItemsIdx) == 0) return(NaN)
@@ -132,14 +139,14 @@ find_rated_users <- function(dataIn, targetItemIdx)
 # NOTE: Make sure to change the similarity function used in both the if and the
 #       else statements if you're planning of using only one similarity function.
 # TODO: Add option for user to choose which sim func to use.
-calc_sims <- function(ratedUsers, targetUser, numRatedUsers)
+calc_sims <- function(ratedUsers, targetUser, numRatedUsers, simFunc, extraArgs = NULL)
 {
         if (numRatedUsers == 1) {
-                simVec <- cosineSim(ratedUsers, targetUser)
+                simVec <- simFunc(ratedUsers, targetUser, extraArgs)
         } else {
                 simVec <- vector(mode = "numeric", length = nrow(ratedUsers))
                 for (i in 1:numRatedUsers)
-                        simVec[i] <- cosineSim(ratedUsers[i,], targetUser)
+                        simVec[i] <- simFunc(ratedUsers[i,], targetUser, extraArgs)
         }
         return(simVec)
 }
@@ -194,9 +201,10 @@ save_mat <- function(ratingPredMat, i, fileName)
 # This version of kNN is for cases where dataIn can be entirely converted into a matrix.
 #       i.e. (# unique users * # unique items) <= .Machine$integer.max
 find_kNN_small <- function(dataIn, k, maxRating, newXs, fileName = NULL,
-                           verbose = FALSE, progressSaving = FALSE)
+                           verbose = FALSE, progressSaving = FALSE,
+                           simFunc = NULL, simMode = "cosine")
 {
-        if(is_valid_values(k, maxRating) == FALSE)
+        if(is_valid_values(k, maxRating, simFunc, simMode) == FALSE)
                 return(-1)
 
         dataMat <- data_to_matrix(dataIn)
@@ -216,7 +224,20 @@ find_kNN_small <- function(dataIn, k, maxRating, newXs, fileName = NULL,
                         ratedUsers <- find_rated_users(dataMat, targetItemIdx)
                         targetUser <- dataMat[targetUserIdx,]
                         numRatedUsers <- sum(!is.na(dataMat[,targetItemIdx]))
-                        simVec <- calc_sims(ratedUsers, targetUser, numRatedUsers)
+                        if (!is.null(simFunc)) {
+                                simVec <- calc_sims(ratedUsers, targetUser, numRatedUsers, simFunc)
+                        } else {
+                                simVec <- switch(
+                                        simMode,
+                                       "rbfk" = calc_sims(ratedUsers, targetUser, numRatedUsers, rbfkSim),
+                                       "correlation" = calc_sims(ratedUsers, targetUser, numRatedUsers, correlSim),
+                                       "chebychev" = calc_sims(ratedUsers, targetUser, numRatedUsers, chebychevSim),
+                                       "euclidean" = calc_sims(ratedUsers, targetUser, numRatedUsers, euclideanSim),
+                                       "manhattan" = calc_sims(ratedUsers, targetUser, numRatedUsers, manhattanSim),
+                                       "cosine" = calc_sims(ratedUsers, targetUser, numRatedUsers, cosineSim)
+                                )
+                        }
+
                         ratingPredMat[i,] <- calc_rating_probs(targetUser,
                                                                targetItemIdx,
                                                                ratedUsers,
