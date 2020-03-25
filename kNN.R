@@ -202,7 +202,7 @@ save_mat <- function(ratingPredMat, i, fileName)
 #       i.e. (# unique users * # unique items) <= .Machine$integer.max
 find_kNN_small <- function(dataIn, k, maxRating, newXs, fileName = NULL,
                            verbose = FALSE, progressSaving = FALSE,
-                           simFunc = NULL, simMode = "cosine")
+                           simFunc = NULL, extraArgs = NULL, simMode = "cosine")
 {
         if(is_valid_values(k, maxRating, simFunc, simMode) == FALSE)
                 return(-1)
@@ -253,10 +253,11 @@ find_kNN_small <- function(dataIn, k, maxRating, newXs, fileName = NULL,
 
 # This version of kNN is for cases where dataIn can NOT be entirely converted into a matrix.
 #       i.e. (# unique users * # unique items) > .Machine$integer.max
-find_kNN_big <- function(dataIn, k, maxRating, newXs,
-                         fileName = NULL, verbose = FALSE, progressSaving = FALSE)
+find_kNN_big <- function(dataIn, k, maxRating, newXs, fileName = NULL,
+                         verbose = FALSE, progressSaving = FALSE,
+                         simFunc = NULL, extraArgs = NULL, simMode = "cosine")
 {
-        if(is_valid_values(k, maxRating) == FALSE)
+        if(is_valid_values(k, maxRating, simFunc, simMode) == FALSE)
                 return(-1)
 
         ratingPredMat <- matrix(nrow = nrow(newXs), ncol = maxRating)
@@ -273,7 +274,7 @@ find_kNN_big <- function(dataIn, k, maxRating, newXs,
                         ratingPredMat[i,] <- ratings
                 } else {
                         # Get users who have rated item newXs[i,2]
-                        ratedUsersIDs <- dataIn[which(dataIn[,2] == newXs[i,2]),1]
+                        ratedUsersIDs <- dataIn[dataIn[,2] == newXs[i,2],1]
                         targetUserID <- newXs[i,1]
 
                         ratedUsersIdx <- which(dataIn[,1] %in% ratedUsersIDs)
@@ -281,13 +282,26 @@ find_kNN_big <- function(dataIn, k, maxRating, newXs,
 
                         dataExtract <- data_to_matrix(dataIn[c(ratedUsersIdx,targetUserIdx),])
 
+                        # Get target user idx of dataExtract
                         targetUserIdx <- which(rownames(dataExtract) == newXs[i,1])
                         targetItemIdx <- which(colnames(dataExtract) == newXs[i,2])
 
                         ratedUsers <- dataExtract[-targetUserIdx,]
                         targetUser <- dataExtract[targetUserIdx,]
                         numRatedUsers <- length(ratedUsersIDs)
-                        simVec <- calc_sims(ratedUsers, targetUser, numRatedUsers)
+                        if (!is.null(simFunc)) {
+                                simVec <- calc_sims(ratedUsers, targetUser, numRatedUsers, simFunc)
+                        } else {
+                                simVec <- switch(
+                                        simMode,
+                                       "rbfk" = calc_sims(ratedUsers, targetUser, numRatedUsers, rbfkSim),
+                                       "correlation" = calc_sims(ratedUsers, targetUser, numRatedUsers, correlSim),
+                                       "chebychev" = calc_sims(ratedUsers, targetUser, numRatedUsers, chebychevSim),
+                                       "euclidean" = calc_sims(ratedUsers, targetUser, numRatedUsers, euclideanSim),
+                                       "manhattan" = calc_sims(ratedUsers, targetUser, numRatedUsers, manhattanSim),
+                                       "cosine" = calc_sims(ratedUsers, targetUser, numRatedUsers, cosineSim)
+                                )
+                        }
                         ratingPredMat[i,] <- calc_rating_probs(targetUser,
                                                                targetItemIdx,
                                                                ratedUsers,
