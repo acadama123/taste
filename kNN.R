@@ -13,7 +13,8 @@ data_to_matrix <- function(dataIn) {
         formula <- paste(c(userID, itemID), collapse = '~')
         table <- dcast(dt, formula, fill = NA, value.var=valueName)
 
-        # The first column of table will be the user IDs, which we don't need in our matrix
+        # The first column of table will be the user IDs,
+        # which we don't need in our matrix
         mat <- as.matrix(table[,-1])
 
         # Assign the row names of the new matrix with our user IDs
@@ -23,9 +24,9 @@ data_to_matrix <- function(dataIn) {
         return(mat)
 }
 
-# TODO: Decide whether to remove this func, as general use should allow
-# negative ratings, meaning this func will become a single if statement.
-is_valid_values <- function(k, maxRating, simFunc, simMode, progressSaving, fileName)
+# Checking find_kNN's (small or big) parameter values
+is_valid_values <- function(k, maxRating, simFunc, simMode,
+                            progressSaving, fileName)
 {
         valid <- TRUE
         if (k <= 0) {
@@ -37,14 +38,15 @@ is_valid_values <- function(k, maxRating, simFunc, simMode, progressSaving, file
                 valid <- FALSE
         }
         if (is.null(simFunc)) {
-                possibleVals <- c("rbfk", "correlation", "chebychev", "euclidean", "manhattan", "cosine")
+                possibleVals <- c("rbfk", "correlation", "chebychev",
+                                  "euclidean", "manhattan", "cosine")
                 if (!(simMode %in% possibleVals)) {
                         print("Error: invalid similarity mode.")
                         valid <- FALSE
                 }
         }
         if (progressSaving && is.null(fileName)) {
-                print("Warning: No file name provided for progress saving process.")
+                print("Warning: No file name provided for progress saving.")
         }
         return(valid)
 }
@@ -57,7 +59,6 @@ get_vlen <- function(v) sqrt(v %*% v)
 
 #----------Radial Basis Function Kernel similarity----------
 # https://en.wikipedia.org/wiki/Radial_basis_function_kernel
-# TODO: Add sigma as a parameter. Consider how this would affect sim func. choosing as well.
 rbfkSim <- function(potentialUser, targetUser, extraArgs = NULL)
 {
         commItemsIdx <- !is.na(potentialUser) & !is.na(targetUser)
@@ -65,7 +66,10 @@ rbfkSim <- function(potentialUser, targetUser, extraArgs = NULL)
 
         xvec <- potentialUser[commItemsIdx]
         yvec <- targetUser[commItemsIdx]
-        sigma <- 1
+        if (is.null(extraArgs))
+                sigma <- 1
+        else
+                sigma <- extraArgs
         exp(-1 * (get_vlen(xvec - yvec) / (2 * (sigma ^ 2))))
 }
 
@@ -138,11 +142,8 @@ find_rated_users <- function(dataIn, targetItemIdx)
 }
 
 # Calculate each rated user's similarity to the target user.
-# Here is where to choose which similarity function to use.
-# NOTE: Make sure to change the similarity function used in both the if and the
-#       else statements if you're planning of using only one similarity function.
-# TODO: Add option for user to choose which sim func to use.
-calc_sims <- function(ratedUsers, targetUser, numRatedUsers, simFunc, extraArgs = NULL)
+calc_sims <- function(ratedUsers, targetUser, numRatedUsers,
+                      simFunc, extraArgs = NULL)
 {
         if (numRatedUsers == 1) {
                 simVec <- simFunc(ratedUsers, targetUser, extraArgs)
@@ -154,13 +155,34 @@ calc_sims <- function(ratedUsers, targetUser, numRatedUsers, simFunc, extraArgs 
         return(simVec)
 }
 
-# Calculates, for each possible rating, the probability that targetUser will give
-# said rating for targetItem.
+get_sim_vec <- function(ratedUsers, targetUser, numRatedUsers,
+                        simFunc, simMode, extraArgs)
+{
+        if (!is.null(simFunc)) {
+                simVec <- calc_sims(ratedUsers, targetUser, numRatedUsers,
+                                    simFunc, extraArgs)
+        } else {
+                simVec <- switch(
+                        simMode,
+                       "rbfk" = calc_sims(ratedUsers, targetUser, numRatedUsers, rbfkSim, extraArgs),
+                       "correlation" = calc_sims(ratedUsers, targetUser, numRatedUsers, correlSim),
+                       "chebychev" = calc_sims(ratedUsers, targetUser, numRatedUsers, chebychevSim),
+                       "euclidean" = calc_sims(ratedUsers, targetUser, numRatedUsers, euclideanSim),
+                       "manhattan" = calc_sims(ratedUsers, targetUser, numRatedUsers, manhattanSim),
+                       "cosine" = calc_sims(ratedUsers, targetUser, numRatedUsers, cosineSim)
+                )
+        }
+        return(simVec)
+}
+
+# Calculates, for each possible rating, the probability that targetUser will
+# give said rating for targetItem.
 calc_rating_probs <- function(targetUser, targetItemIdx, ratedUsers,
                               simVec, k, maxRating)
 {
         # Each element in simVec corresponds to the same element in ratedUsers
-        sortOrder <- sort(simVec, decreasing = TRUE, na.last = TRUE, index.return = TRUE)
+        sortOrder <- sort(simVec, decreasing = TRUE,
+                          na.last = TRUE, index.return = TRUE)
         if (length(sortOrder$ix) == 0) {
                 # No nearest neighbours found
                 # Return probability vector of all zeros.
@@ -172,7 +194,8 @@ calc_rating_probs <- function(targetUser, targetItemIdx, ratedUsers,
                         numNN <- 1
                         kNN <- nearestNeighbours[targetItemIdx]
                 } else {
-                        # If don't have k nearest neighbours, use as many as there are
+                        # If don't have k nearest neighbours,
+                        # use as many as there are
                         nearestNeighbours <- ratedUsers[sortOrder$ix,]
                         numNN <- min(k, nrow(nearestNeighbours))
                         kNN <- nearestNeighbours[1:numNN,targetItemIdx]
@@ -186,7 +209,6 @@ calc_rating_probs <- function(targetUser, targetItemIdx, ratedUsers,
 }
 
 # Saves the current rating prediction matrix.
-# TODO: Add option for choosing saving iteration and number of save files to keep
 save_mat <- function(ratingPredMat, i, fileName, saveIter, numSaveFiles)
 {
         print("Saving matrix")
@@ -201,14 +223,15 @@ save_mat <- function(ratingPredMat, i, fileName, saveIter, numSaveFiles)
 # find_kNN's assumptions:
 #       1. newXs doesn't contain any new users or items
 #       2. ratings have consecutive integer values, ranging from 1 to maxRating.
-# This version of kNN is for cases where dataIn can be entirely converted into a matrix.
+# This version of kNN is for cases where dataIn can be converted into a matrix.
 #       i.e. (# unique users * # unique items) <= .Machine$integer.max
 find_kNN_small <- function(dataIn, k, maxRating, newXs, verbose = FALSE,
                            simFunc = NULL, simMode = "cosine", extraArgs = NULL,
                            progressSaving = FALSE, fileName = NULL,
                            saveIter = 10000, numSaveFiles = 5)
 {
-        if(is_valid_values(k, maxRating, simFunc, simMode, progressSaving, fileName) == FALSE)
+        if(is_valid_values(k, maxRating, simFunc, simMode,
+                           progressSaving, fileName) == FALSE)
                 return(-1)
 
         dataMat <- data_to_matrix(dataIn)
@@ -228,20 +251,12 @@ find_kNN_small <- function(dataIn, k, maxRating, newXs, verbose = FALSE,
                         ratedUsers <- find_rated_users(dataMat, targetItemIdx)
                         targetUser <- dataMat[targetUserIdx,]
                         numRatedUsers <- sum(!is.na(dataMat[,targetItemIdx]))
-                        if (!is.null(simFunc)) {
-                                simVec <- calc_sims(ratedUsers, targetUser, numRatedUsers, simFunc)
-                        } else {
-                                simVec <- switch(
-                                        simMode,
-                                       "rbfk" = calc_sims(ratedUsers, targetUser, numRatedUsers, rbfkSim),
-                                       "correlation" = calc_sims(ratedUsers, targetUser, numRatedUsers, correlSim),
-                                       "chebychev" = calc_sims(ratedUsers, targetUser, numRatedUsers, chebychevSim),
-                                       "euclidean" = calc_sims(ratedUsers, targetUser, numRatedUsers, euclideanSim),
-                                       "manhattan" = calc_sims(ratedUsers, targetUser, numRatedUsers, manhattanSim),
-                                       "cosine" = calc_sims(ratedUsers, targetUser, numRatedUsers, cosineSim)
-                                )
-                        }
-
+                        simVec <- get_sim_vec(ratedUsers,
+                                              targetUser,
+                                              numRatedUsers,
+                                              simFunc,
+                                              simMode,
+                                              extraArgs)
                         ratingPredMat[i,] <- calc_rating_probs(targetUser,
                                                                targetItemIdx,
                                                                ratedUsers,
@@ -255,14 +270,16 @@ find_kNN_small <- function(dataIn, k, maxRating, newXs, verbose = FALSE,
         return(ratingPredMat)
 }
 
-# This version of kNN is for cases where dataIn can NOT be entirely converted into a matrix.
+# This version of kNN is for cases where dataIn can NOT be entirely converted
+#       into a matrix.
 #       i.e. (# unique users * # unique items) > .Machine$integer.max
 find_kNN_big <- function(dataIn, k, maxRating, newXs, verbose = FALSE,
                          simFunc = NULL, simMode = "cosine", extraArgs = NULL,
                          progressSaving = FALSE, fileName = NULL,
                          saveIter = 10000, numSaveFiles = 5)
 {
-        if(is_valid_values(k, maxRating, simFunc, simMode, progressSaving, fileName) == FALSE)
+        if(is_valid_values(k, maxRating, simFunc, simMode,
+                           progressSaving, fileName) == FALSE)
                 return(-1)
 
         ratingPredMat <- matrix(nrow = nrow(newXs), ncol = maxRating)
@@ -271,7 +288,6 @@ find_kNN_big <- function(dataIn, k, maxRating, newXs, verbose = FALSE,
                         print(i)
                 foundRating <- dataIn[,1] == newXs[i,1] & dataIn[,2] == newXs[i,2]
 
-                # Assume no repeated rating
                 if (sum(foundRating) > 0) {
                         # Known rating
                         ratings <- vector(mode = "integer", length = maxRating)
@@ -282,31 +298,24 @@ find_kNN_big <- function(dataIn, k, maxRating, newXs, verbose = FALSE,
                         ratedUsersIDs <- dataIn[dataIn[,2] == newXs[i,2],1]
                         targetUserID <- newXs[i,1]
 
+                        # Get all ratings we'll consider
                         ratedUsersIdx <- which(dataIn[,1] %in% ratedUsersIDs)
                         targetUserIdx <- which(dataIn[,1] %in% targetUserID)
-
                         dataExtract <- data_to_matrix(dataIn[c(ratedUsersIdx,targetUserIdx),])
 
-                        # Get target user idx of dataExtract
+                        # targetUserIdx here if for dataExtract, not dataIn
                         targetUserIdx <- which(rownames(dataExtract) == newXs[i,1])
                         targetItemIdx <- which(colnames(dataExtract) == newXs[i,2])
 
                         ratedUsers <- dataExtract[-targetUserIdx,]
                         targetUser <- dataExtract[targetUserIdx,]
                         numRatedUsers <- length(ratedUsersIDs)
-                        if (!is.null(simFunc)) {
-                                simVec <- calc_sims(ratedUsers, targetUser, numRatedUsers, simFunc)
-                        } else {
-                                simVec <- switch(
-                                        simMode,
-                                       "rbfk" = calc_sims(ratedUsers, targetUser, numRatedUsers, rbfkSim),
-                                       "correlation" = calc_sims(ratedUsers, targetUser, numRatedUsers, correlSim),
-                                       "chebychev" = calc_sims(ratedUsers, targetUser, numRatedUsers, chebychevSim),
-                                       "euclidean" = calc_sims(ratedUsers, targetUser, numRatedUsers, euclideanSim),
-                                       "manhattan" = calc_sims(ratedUsers, targetUser, numRatedUsers, manhattanSim),
-                                       "cosine" = calc_sims(ratedUsers, targetUser, numRatedUsers, cosineSim)
-                                )
-                        }
+                        simVec <- get_sim_vec(ratedUsers,
+                                              targetUser,
+                                              numRatedUsers,
+                                              simFunc,
+                                              simMode,
+                                              extraArgs)
                         ratingPredMat[i,] <- calc_rating_probs(targetUser,
                                                                targetItemIdx,
                                                                ratedUsers,
@@ -341,7 +350,6 @@ get_accuracy <- function(ratingPredMat, maxRating, newXs, correctRatings)
 }
 
 # Runs find_kNN (small or big) and tests the predictions with know ratings.
-# TODO: Add option to save results or not.
 test_kNN <- function(dataIn, k, maxRating, newXs, correctRatings, verbose = FALSE,
                      simFunc = NULL, simMode = "cosine", extraArgs = NULL,
                      progressSaving = FALSE, fileName = NULL,
@@ -371,10 +379,13 @@ test_kNN <- function(dataIn, k, maxRating, newXs, correctRatings, verbose = FALS
                 # and the actual ratings, as well as the mean absolute
                 # prediction error between them.
                 print("Rating distributions:")
+
                 print("For predicted ratings:")
                 print(ratingPredMeans)
+
                 print("For actual ratings:")
                 print(actualMeans)
+
                 print("MAPE value between the above 2 proportions:")
                 print(mean(abs(ratingPredMeans - actualMeans)))
 
