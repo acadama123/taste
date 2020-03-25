@@ -25,7 +25,7 @@ data_to_matrix <- function(dataIn) {
 
 # TODO: Decide whether to remove this func, as general use should allow
 # negative ratings, meaning this func will become a single if statement.
-is_valid_values <- function(k, maxRating, simFunc, simMode)
+is_valid_values <- function(k, maxRating, simFunc, simMode, progressSaving, fileName)
 {
         valid <- TRUE
         if (k <= 0) {
@@ -42,6 +42,9 @@ is_valid_values <- function(k, maxRating, simFunc, simMode)
                         print("Error: invalid similarity mode.")
                         valid <- FALSE
                 }
+        }
+        if (progressSaving && is.null(fileName)) {
+                print("Warning: No file name provided for progress saving process.")
         }
         return(valid)
 }
@@ -184,13 +187,13 @@ calc_rating_probs <- function(targetUser, targetItemIdx, ratedUsers,
 
 # Saves the current rating prediction matrix.
 # TODO: Add option for choosing saving iteration and number of save files to keep
-save_mat <- function(ratingPredMat, i, fileName)
+save_mat <- function(ratingPredMat, i, fileName, saveIter, numSaveFiles)
 {
         print("Saving matrix")
         name <- paste(fileName, "_", i, ".mat", sep="")
         write.csv(ratingPredMat, name, row.names = FALSE)
-        # Only keep latest 5 iterations
-        oldFileName <- paste(fileName,".mat", i - 5*10000, sep="")
+        # Only keep latest numSaveFiles iterations
+        oldFileName <- paste(fileName, "_", i - numSaveFiles * saveIter, ".mat", sep="")
         if (file.exists(oldFileName))
                 unlink(oldFileName)
 }
@@ -200,11 +203,12 @@ save_mat <- function(ratingPredMat, i, fileName)
 #       2. ratings have consecutive integer values, ranging from 1 to maxRating.
 # This version of kNN is for cases where dataIn can be entirely converted into a matrix.
 #       i.e. (# unique users * # unique items) <= .Machine$integer.max
-find_kNN_small <- function(dataIn, k, maxRating, newXs, fileName = NULL,
-                           verbose = FALSE, progressSaving = FALSE,
-                           simFunc = NULL, extraArgs = NULL, simMode = "cosine")
+find_kNN_small <- function(dataIn, k, maxRating, newXs, verbose = FALSE,
+                           simFunc = NULL, simMode = "cosine", extraArgs = NULL,
+                           progressSaving = FALSE, fileName = NULL,
+                           saveIter = 10000, numSaveFiles = 5)
 {
-        if(is_valid_values(k, maxRating, simFunc, simMode) == FALSE)
+        if(is_valid_values(k, maxRating, simFunc, simMode, progressSaving, fileName) == FALSE)
                 return(-1)
 
         dataMat <- data_to_matrix(dataIn)
@@ -245,19 +249,20 @@ find_kNN_small <- function(dataIn, k, maxRating, newXs, fileName = NULL,
                                                                k,
                                                                maxRating)
                 }
-                if (progressSaving && i %% 10000 == 0)
-                        save_mat(ratingPredMat, i, fileName)
+                if (progressSaving && i %% saveIter == 0)
+                        save_mat(ratingPredMat, i, fileName, saveIter, numSaveFiles)
         }
         return(ratingPredMat)
 }
 
 # This version of kNN is for cases where dataIn can NOT be entirely converted into a matrix.
 #       i.e. (# unique users * # unique items) > .Machine$integer.max
-find_kNN_big <- function(dataIn, k, maxRating, newXs, fileName = NULL,
-                         verbose = FALSE, progressSaving = FALSE,
-                         simFunc = NULL, extraArgs = NULL, simMode = "cosine")
+find_kNN_big <- function(dataIn, k, maxRating, newXs, verbose = FALSE,
+                         simFunc = NULL, simMode = "cosine", extraArgs = NULL,
+                         progressSaving = FALSE, fileName = NULL,
+                         saveIter = 10000, numSaveFiles = 5)
 {
-        if(is_valid_values(k, maxRating, simFunc, simMode) == FALSE)
+        if(is_valid_values(k, maxRating, simFunc, simMode, progressSaving, fileName) == FALSE)
                 return(-1)
 
         ratingPredMat <- matrix(nrow = nrow(newXs), ncol = maxRating)
@@ -309,8 +314,8 @@ find_kNN_big <- function(dataIn, k, maxRating, newXs, fileName = NULL,
                                                                k,
                                                                maxRating)
                 }
-                if (progressSaving && i %% 10000 == 0)
-                        save_mat(ratingPredMat, i, fileName)
+                if (progressSaving && i %% saveIter == 0)
+                        save_mat(ratingPredMat, i, fileName, saveIter, numSaveFiles)
         }
         return(ratingPredMat)
 }
@@ -337,16 +342,25 @@ get_accuracy <- function(ratingPredMat, maxRating, newXs, correctRatings)
 
 # Runs find_kNN (small or big) and tests the predictions with know ratings.
 # TODO: Add option to save results or not.
-test_kNN <- function(dataIn, k, maxRating, newXs, correctRatings, fileName)
+test_kNN <- function(dataIn, k, maxRating, newXs, correctRatings, verbose = FALSE,
+                     simFunc = NULL, simMode = "cosine", extraArgs = NULL,
+                     progressSaving = FALSE, fileName = NULL,
+                     saveIter = 10000, numSaveFiles = 5)
 {
         if (nrow(newXs) != length(correctRatings)) {
                 print("Error: Number of prediction entries doesn't match number of correct ratings.")
                 return(-1)
         } else {
                 if ((.Machine$integer.max / length(unique(dataIn[,1]))) > length(unique(dataIn[,2]))) {
-                        ratingPredMat <- find_kNN_small(dataIn, k, maxRating, newXs, fileName)
+                        ratingPredMat <- find_kNN_small(dataIn, k, maxRating, newXs, verbose = verbose,
+                                                        simFunc = simFunc, simMode = simMode, extraArgs = extraArgs,
+                                                        progressSaving = progressSaving, fileName = fileName,
+                                                        saveIter = saveIter, numSaveFiles = numSaveFiles)
                 } else {
-                        ratingPredMat <- find_kNN_big(dataIn, k, maxRating, newXs, fileName, TRUE, TRUE)
+                        ratingPredMat <- find_kNN_big(dataIn, k, maxRating, newXs, verbose = verbose,
+                                                      simFunc = simFunc, simMode = simMode, extraArgs = extraArgs,
+                                                      progressSaving = progressSaving, fileName = fileName,
+                                                      saveIter = saveIter, numSaveFiles = numSaveFiles)
                 }
                 ratingPredMeans <- colMeans(ratingPredMat)
                 actualMeans <- vector(mode = "numeric", length = maxRating)
@@ -368,10 +382,12 @@ test_kNN <- function(dataIn, k, maxRating, newXs, correctRatings, fileName)
                 print("Percentage of accurate predictions:")
                 print(get_accuracy(ratingPredMat, maxRating, newXs, correctRatings))
 
-                probResults <- rbind(ratingPredMeans, actualMeans)
-                probName <- paste(fileName, ".result", sep="")
-                matName <- paste(fileName, ".mat", sep="")
-                write.csv(probResults, probName, row.names = FALSE)
-                write.csv(ratingPredMat, matName, row.names = FALSE)
+                if (!is.null(fileName)) {
+                        probResults <- rbind(ratingPredMeans, actualMeans)
+                        probName <- paste(fileName, ".result", sep="")
+                        matName <- paste(fileName, ".mat", sep="")
+                        write.csv(probResults, probName, row.names = FALSE)
+                        write.csv(ratingPredMat, matName, row.names = FALSE)
+                }
         }
 }
